@@ -1,0 +1,164 @@
+---
+title: "week3-discussion"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(spData)
+library(spDataLarge)
+library(sf)
+library(stars)
+library(terra)
+```
+
+```{r}
+dem <- terra::rast(system.file("raster/dem.tif", package = "spDataLarge"))
+landsat <- terra::rast(system.file("raster/landsat.tif", package = "spDataLarge"))
+srtm <- terra::rast(system.file("raster/srtm.tif", package = "spDataLarge"))
+peru <- stars::read_stars(here::here("data", "PER_elv.tif"))
+peru <- rast(peru)
+```
+
+1. Histogram and Boxplot of Dem
+```{r}
+hist(dem)
+boxplot(dem)
+```
+
+2. Reclassify dem and compute the mean for the three classes:
+- Low, where elevation is less than 300
+- Medium
+- High, where elevation is greater than 500
+
+```{r}
+# define a reclassification matrix
+rcl <- matrix(c(-Inf, 300, 0, # values -Inf to 300 = 0
+                300, 500, 1,  # values 300 to 500 = 1
+                500, Inf, 2), # values 500 to Inf = 2
+              ncol = 3, byrow = TRUE)
+
+# apply the matrix to reclassify the raster, making all cells 0 or 1 or 2
+dem_rcl <- terra::classify(dem, rcl = rcl)
+
+# assign labels to the numerical categories
+levels(dem_rcl) <- tibble::tibble(id = 0:2, 
+                                  cats = c("low", "medium", "high"))
+
+# calculate mean elevation for each category using original DEM values
+elevation_mean <- terra::zonal(dem, dem_rcl, fun = "mean")
+elevation_mean
+```
+
+
+```{r}
+# Reclassify Dem- this code chunk isn't working, try to figure out why
+rcl <- matrix(c(-Inf, 300, 1,
+                301, 500, 2,
+                501, 1000, 3),
+              ncol = 3, byrow = TRUE)
+
+print(rcl)
+
+
+rcl_dem <- terra::classify(dem, rcl = rcl) 
+
+# assign labels to the numerical categories
+levels(rcl_dem) <- tibble::tibble(id = 1:3, 
+                                  cats = c("low", "medium", "high"))
+
+# calculate mean elevation for each category using original DEM values
+elev_mean <- terra::zonal(dem, rcl_dem, fun = "mean")
+elev_mean
+```
+
+3. Calculate NVDI!!! Woohhoo!
+
+```{r}
+# function
+ndvi_fun <- function(nir, red){
+  (nir - red)/(nir + red)
+}
+
+ndvi_rast <- terra::lapp(landsat[[c(4,3)]], fun = ndvi_fun)
+```
+
+```{r}
+# function for NDWI
+ndwi_fun <- function(green, nir){
+  (green - nir)/(green + nir)
+}
+
+ndwi_rast <- terra::lapp(landsat[[c(2,4)]], fun = ndwi_fun)
+```
+
+```{r}
+# Plotting
+ndwi_rast <- terra::lapp(landsat[[c(2, 4)]],
+                         fun = ndwi_fun)
+plot(ndwi_rast,
+     main = "Zion National Park NDWI")
+
+ndvi_rast <- terra::lapp(landsat[[c(4, 3)]],
+                         fun = ndvi_fun)
+
+# stack rasters
+combine <- c(ndvi_rast, ndwi_rast)
+
+plot(combine, main = c("NDVI", "NDWI"))
+```
+
+```{r}
+# Find a correlation between NDVI and NDWI
+terra::layerCor(combine, fun = cor)
+```
+
+4. Peru
+```{r}
+# Aggregate by a factor of 20 to reduce resolution and create new raster
+peru_agg <- terra::aggregate(rast(peru), fact = 20)
+plot(peru_agg)
+```
+
+```{r}
+# Create mask of ocean (NA values)
+water_mask <- is.na(peru_agg) # returns TRUE value for NA
+# Set all FALSE values to NA
+water_mask[water_mask == 0] <- NA
+plot(water_mask)
+```
+
+```{r}
+# Find distance from each cell to ocean/coastline (default is unit = "m")
+distance_to_coast <- terra::distance(water_mask)
+```
+
+```{r}
+# Convert from meters to kilometers 
+distance_to_coast_km <- distance_to_coast/1000
+
+plot(distance_to_coast_km, main = "Distance to the coast (km)")
+```
+
+5. Change resolution
+```{r}
+plot(srtm)
+```
+
+```{r}
+rast_template <- terra::rast(terra::ext(srtm), res = 0.01)
+
+srtm_resampl1 <- terra::resample(srtm, y = rast_template, method = "bilinear")
+srtm_resampl2 <- terra::resample(srtm, y = rast_template, method = "near")
+srtm_resampl3 <- terra::resample(srtm, y = rast_template, method = "cubic")
+srtm_resampl4 <- terra::resample(srtm, y = rast_template, method = "cubicspline")
+srtm_resampl5 <- terra::resample(srtm, y = rast_template, method = "lanczos")
+
+srtm_resampl_all <- c(srtm_resampl1, srtm_resampl2, srtm_resampl3, srtm_resampl4, srtm_resampl5)
+labs <- c("Bilinear", "Near", "Cubic", "Cubic Spline", "Lanczos")
+plot(srtm_resampl_all, main = labs)
+```
+
